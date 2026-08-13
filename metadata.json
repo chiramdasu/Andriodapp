@@ -1,0 +1,6 @@
+{
+  "name": "Receipt OCR & Warranty Parser",
+  "description": "Upload and parse store receipts automatically using Gemini AI OCR to extract store details, purchase dates, total amounts, itemized lists, and warranty expiration dates.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
