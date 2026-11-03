@@ -63,6 +63,38 @@ export const ReceiptDetails: React.FC<ReceiptDetailsProps> = ({
     });
   };
 
+  // Editing warranty duration (months) recomputes the item's expiration
+  // date from the receipt's purchase date.
+  const handleItemWarrantyMonths = (index: number, monthsRaw: string) => {
+    const months = parseInt(monthsRaw, 10);
+    setEditedReceipt((prev) => {
+      const updatedItems = [...prev.items];
+      const item = { ...updatedItems[index] };
+      if (!monthsRaw || isNaN(months) || months <= 0) {
+        item.warrantyDurationMonths = undefined;
+        item.warrantyExpirationDate = undefined;
+        item.hasWarranty = false;
+      } else {
+        item.warrantyDurationMonths = months;
+        item.hasWarranty = true;
+        item.warrantyExpirationDate = calculateExpirationDate(prev.purchaseDate, months);
+      }
+      updatedItems[index] = item;
+      return { ...prev, items: updatedItems };
+    });
+  };
+
+  // Keep overall receipt expiry in sync with the latest item expiry on save
+  const recomputeOverallExpiry = (r: ReceiptData): ReceiptData => {
+    let latest: string | undefined;
+    r.items.forEach((i) => {
+      if (i.warrantyExpirationDate && (!latest || i.warrantyExpirationDate > latest)) {
+        latest = i.warrantyExpirationDate;
+      }
+    });
+    return { ...r, overallWarrantyExpirationDate: latest };
+  };
+
   const addItem = () => {
     setEditedReceipt((prev) => ({
       ...prev,
@@ -87,7 +119,9 @@ export const ReceiptDetails: React.FC<ReceiptDetailsProps> = ({
 
   const handleSaveClick = () => {
     setIsEditing(false);
-    onSave(editedReceipt);
+    const finalReceipt = recomputeOverallExpiry(editedReceipt);
+    setEditedReceipt(finalReceipt);
+    onSave(finalReceipt);
     setSaveToast(true);
     setTimeout(() => setSaveToast(false), 3000);
   };
@@ -131,7 +165,9 @@ export const ReceiptDetails: React.FC<ReceiptDetailsProps> = ({
         <div className="flex items-center gap-2">
           <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 flex items-center gap-1">
             <Sparkles className="w-3 h-3 text-blue-600" />
-            OCR Parsed ({editedReceipt.confidenceScore || 95}% Confidence)
+            {editedReceipt.confidenceScore
+              ? `On-Device OCR (${editedReceipt.confidenceScore}% Confidence)`
+              : 'Manual Entry'}
           </span>
           {isSavedInVault && (
             <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 flex items-center gap-1">
@@ -482,6 +518,17 @@ export const ReceiptDetails: React.FC<ReceiptDetailsProps> = ({
                         <td className="py-3 px-2">
                           {isEditing ? (
                             <div className="space-y-1">
+                              <label className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
+                                Duration (months)
+                                <input
+                                  type="number"
+                                  min="0"
+                                  placeholder="e.g. 12"
+                                  value={item.warrantyDurationMonths ?? ''}
+                                  onChange={(e) => handleItemWarrantyMonths(idx, e.target.value)}
+                                  className="w-16 border rounded-md px-1.5 py-0.5 text-[11px] text-slate-800"
+                                />
+                              </label>
                               <input
                                 type="date"
                                 value={item.warrantyExpirationDate || ''}

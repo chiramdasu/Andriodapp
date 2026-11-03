@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Small app-wide niceties on top of Tailwind v4 defaults */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  overscroll-behavior-y: none;
+}

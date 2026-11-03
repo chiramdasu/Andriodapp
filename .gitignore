@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Tesseract OCR engine assets are copied from node_modules at build time
+# by scripts/copy-tesseract-assets.mjs — they are build artifacts, not source.
+public/tesseract/
+
+# Secrets / local environment — NEVER commit API keys or keystores
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+key.properties
+
+# Capacitor / Android local files
+android/local.properties
+android/app/build/
+android/build/
+android/.gradle/
+*.apk
+*.aab
+
+# Misc
+.DS_Store
+*.log

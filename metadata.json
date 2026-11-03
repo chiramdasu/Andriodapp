@@ -1,6 +1,1 @@
-{
-  "name": "Receipt OCR & Warranty Parser",
-  "description": "Upload and parse store receipts automatically using Gemini AI OCR to extract store details, purchase dates, total amounts, itemized lists, and warranty expiration dates.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
+{"description":"Receipt Vault: scan store receipts with fully on-device OCR (Tesseract.js) to extract store details, purchase dates, totals, itemized lines, and warranty expiration dates. Packaged for Android with Capacitor.","majorCapabilities":["ON_DEVICE_TESSERACT_OCR","WARRANTY_TRACKING","CAPACITOR_ANDROID"],"name":"Receipt Vault — OCR & Warranty Tracker","requestFramePermissions":["camera"]}

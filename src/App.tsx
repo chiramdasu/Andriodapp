@@ -87,11 +87,15 @@ export default function App() {
     }
   };
 
-  // Counts for badge notifications
-  const expiringCount = receipts.filter((r) => {
-    const w = getWarrantyStatus(r.overallWarrantyExpirationDate);
-    return w.status === 'expiring_soon';
-  }).length;
+  // Counts for badge notifications (item-level: any item expiring within 30d)
+  const expiringCount = receipts.reduce((count, r) => {
+    const hasExpiringItem = r.items.some(
+      (item) => getWarrantyStatus(item.warrantyExpirationDate).status === 'expiring_soon'
+    );
+    const receiptExpiring =
+      getWarrantyStatus(r.overallWarrantyExpirationDate).status === 'expiring_soon';
+    return count + (hasExpiringItem || receiptExpiring ? 1 : 0);
+  }, 0);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans antialiased flex flex-col selection:bg-blue-500 selection:text-white">
@@ -118,7 +122,7 @@ export default function App() {
         {errorMessage && (
           <div className="max-w-2xl mx-auto mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center justify-between">
             <div>
-              <span className="font-bold block">OCR Parsing Error</span>
+              <span className="font-bold block">OCR Issue</span>
               <p className="text-xs text-rose-600">{errorMessage}</p>
             </div>
             <button
@@ -185,7 +189,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-200/80 bg-white py-6 mt-12 text-center text-xs text-slate-500">
-        <p>ReceiptVault &copy; 2026. Powered by Gemini 3.6 Flash Vision OCR.</p>
+        <p>ReceiptVault &copy; 2026. On-device Tesseract OCR — fully offline, no account or API key needed.</p>
       </footer>
     </div>
   );

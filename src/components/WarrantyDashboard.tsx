@@ -3,26 +3,26 @@ import {
   ShieldCheck,
   ShieldAlert,
   Clock,
-  AlertTriangle,
   Calendar,
-  Store,
-  ExternalLink,
   ChevronRight,
-  CheckCircle2,
   FileText,
-  HelpCircle,
 } from 'lucide-react';
-import { ReceiptData } from '../types/receipt';
+import { ReceiptData, ReceiptItem } from '../types/receipt';
 import {
   getWarrantyStatus,
   formatDate,
   formatCurrency,
-  getDaysRemaining,
 } from '../utils/dateUtils';
 
 interface WarrantyDashboardProps {
   receipts: ReceiptData[];
   onSelectReceipt: (receipt: ReceiptData) => void;
+}
+
+interface WarrantyEntry {
+  receipt: ReceiptData;
+  item: ReceiptItem;
+  status: ReturnType<typeof getWarrantyStatus>;
 }
 
 export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
@@ -31,47 +31,48 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
 }) => {
   const [filterTab, setFilterTab] = useState<'all' | 'expiring_soon' | 'active' | 'expired'>('all');
 
-  // Compute metric stats
+  // Flatten every warrantied item across all receipts
+  const allEntries = useMemo<WarrantyEntry[]>(() => {
+    const entries: WarrantyEntry[] = [];
+    receipts.forEach((receipt) => {
+      receipt.items.forEach((item) => {
+        if (item.warrantyExpirationDate || item.hasWarranty) {
+          entries.push({
+            receipt,
+            item,
+            status: getWarrantyStatus(item.warrantyExpirationDate),
+          });
+        }
+      });
+    });
+    // Sort by expiration date ascending (soonest first; no-date last)
+    return entries.sort((a, b) => {
+      const da = a.item.warrantyExpirationDate
+        ? new Date(a.item.warrantyExpirationDate).getTime()
+        : Number.POSITIVE_INFINITY;
+      const db = b.item.warrantyExpirationDate
+        ? new Date(b.item.warrantyExpirationDate).getTime()
+        : Number.POSITIVE_INFINITY;
+      return da - db;
+    });
+  }, [receipts]);
+
   const metrics = useMemo(() => {
     let active = 0;
     let expiringSoon = 0;
     let expired = 0;
-    let totalItemsCovered = 0;
-
-    receipts.forEach((r) => {
-      const w = getWarrantyStatus(r.overallWarrantyExpirationDate);
-      if (w.status === 'active') active++;
-      if (w.status === 'expiring_soon') expiringSoon++;
-      if (w.status === 'expired') expired++;
-
-      r.items.forEach((item) => {
-        if (item.hasWarranty || item.warrantyExpirationDate) {
-          totalItemsCovered++;
-        }
-      });
+    allEntries.forEach(({ status }) => {
+      if (status.status === 'active') active++;
+      if (status.status === 'expiring_soon') expiringSoon++;
+      if (status.status === 'expired') expired++;
     });
+    return { active, expiringSoon, expired, totalItemsCovered: allEntries.length };
+  }, [allEntries]);
 
-    return { active, expiringSoon, expired, totalItemsCovered };
-  }, [receipts]);
-
-  // Receipts with warranties sorted by expiration date ascending
-  const warrantyReceipts = useMemo(() => {
-    return receipts
-      .filter((r) => r.overallWarrantyExpirationDate)
-      .map((r) => {
-        const w = getWarrantyStatus(r.overallWarrantyExpirationDate);
-        return { receipt: r, warrantyInfo: w };
-      })
-      .filter(({ warrantyInfo }) => {
-        if (filterTab === 'all') return true;
-        return warrantyInfo.status === filterTab;
-      })
-      .sort((a, b) => {
-        const dateA = new Date(a.receipt.overallWarrantyExpirationDate!).getTime();
-        const dateB = new Date(b.receipt.overallWarrantyExpirationDate!).getTime();
-        return dateA - dateB;
-      });
-  }, [receipts, filterTab]);
+  const filteredEntries = useMemo(() => {
+    if (filterTab === 'all') return allEntries;
+    return allEntries.filter(({ status }) => status.status === filterTab);
+  }, [allEntries, filterTab]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -86,7 +87,7 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
               Warranty Expiration Center
             </h1>
             <p className="text-xs text-slate-500">
-              Track active manufacturer warranties, extended protection plans, and claims
+              Every warrantied item across all receipts, sorted by expiration date
             </p>
           </div>
         </div>
@@ -94,19 +95,17 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
 
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Expiring Soon Card */}
         <div className="bg-white rounded-2xl p-5 border border-amber-200/80 shadow-2xs space-y-2">
           <div className="flex items-center justify-between text-amber-600">
-            <span className="text-xs font-bold uppercase tracking-wider">Expiring Soon (&lt; 30d)</span>
+            <span className="text-xs font-bold uppercase tracking-wider">Expiring Soon (≤ 30d)</span>
             <Clock className="w-5 h-5" />
           </div>
           <div className="text-3xl font-extrabold text-slate-900 font-mono">
             {metrics.expiringSoon}
           </div>
-          <p className="text-[11px] text-slate-500">Require immediate claim or renewal review</p>
+          <p className="text-[11px] text-slate-500">Items needing immediate claim or renewal review</p>
         </div>
 
-        {/* Active Warranties */}
         <div className="bg-white rounded-2xl p-5 border border-emerald-200/80 shadow-2xs space-y-2">
           <div className="flex items-center justify-between text-emerald-600">
             <span className="text-xs font-bold uppercase tracking-wider">Active Warranties</span>
@@ -115,10 +114,9 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
           <div className="text-3xl font-extrabold text-slate-900 font-mono">
             {metrics.active}
           </div>
-          <p className="text-[11px] text-slate-500">Fully covered under active plan</p>
+          <p className="text-[11px] text-slate-500">Items fully covered under an active plan</p>
         </div>
 
-        {/* Expired Warranties */}
         <div className="bg-white rounded-2xl p-5 border border-rose-200/80 shadow-2xs space-y-2">
           <div className="flex items-center justify-between text-rose-600">
             <span className="text-xs font-bold uppercase tracking-wider">Expired Warranties</span>
@@ -127,10 +125,9 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
           <div className="text-3xl font-extrabold text-slate-900 font-mono">
             {metrics.expired}
           </div>
-          <p className="text-[11px] text-slate-500">Passed warranty protection date</p>
+          <p className="text-[11px] text-slate-500">Items past their warranty protection date</p>
         </div>
 
-        {/* Total Warranted Items */}
         <div className="bg-white rounded-2xl p-5 border border-blue-200/80 shadow-2xs space-y-2">
           <div className="flex items-center justify-between text-blue-600">
             <span className="text-xs font-bold uppercase tracking-wider">Total Covered Items</span>
@@ -144,7 +141,7 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2 flex-wrap">
         <button
           onClick={() => setFilterTab('all')}
           className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -153,7 +150,7 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
               : 'text-slate-600 hover:bg-slate-100'
           }`}
         >
-          All Warranties ({receipts.filter((r) => r.overallWarrantyExpirationDate).length})
+          All Items ({metrics.totalItemsCovered})
         </button>
         <button
           onClick={() => setFilterTab('expiring_soon')}
@@ -187,68 +184,69 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
         </button>
       </div>
 
-      {/* Warranty Items Timeline List */}
-      {warrantyReceipts.length === 0 ? (
+      {/* Warranty Items List, soonest expiry first */}
+      {filteredEntries.length === 0 ? (
         <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 space-y-3">
           <ShieldCheck className="w-10 h-10 text-slate-300 mx-auto" />
           <h3 className="text-base font-bold text-slate-900">No matching warranties found</h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
-            Scan store receipts with electronics, tools, or extended service plans to automatically populate this calendar.
+            Scan store receipts with electronics, appliances, tools, or extended service plans
+            to automatically populate this tracker.
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {warrantyReceipts.map(({ receipt: rcpt, warrantyInfo }) => (
+        <div className="space-y-3">
+          {filteredEntries.map(({ receipt: rcpt, item, status }) => (
             <div
-              key={rcpt.id}
+              key={`${rcpt.id}-${item.id}`}
               onClick={() => onSelectReceipt(rcpt)}
               className="bg-white rounded-2xl p-5 border border-slate-200/80 hover:border-blue-500 hover:shadow-md transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
             >
               <div className="flex items-start gap-4">
                 <div
                   className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                    warrantyInfo.status === 'active'
+                    status.status === 'active'
                       ? 'bg-emerald-100 text-emerald-700'
-                      : warrantyInfo.status === 'expiring_soon'
+                      : status.status === 'expiring_soon'
                       ? 'bg-amber-100 text-amber-700'
-                      : 'bg-rose-100 text-rose-700'
+                      : status.status === 'expired'
+                      ? 'bg-rose-100 text-rose-700'
+                      : 'bg-slate-100 text-slate-500'
                   }`}
                 >
-                  {warrantyInfo.status === 'active' ? (
+                  {status.status === 'active' ? (
                     <ShieldCheck className="w-6 h-6" />
-                  ) : warrantyInfo.status === 'expiring_soon' ? (
+                  ) : status.status === 'expiring_soon' ? (
                     <Clock className="w-6 h-6 animate-pulse" />
-                  ) : (
+                  ) : status.status === 'expired' ? (
                     <ShieldAlert className="w-6 h-6" />
+                  ) : (
+                    <ShieldCheck className="w-6 h-6" />
                   )}
                 </div>
 
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-extrabold text-slate-900 text-base">
-                      {rcpt.storeName}
-                    </h3>
-                    <span className="text-xs font-mono text-slate-400">
-                      Purchased {formatDate(rcpt.purchaseDate)}
+                  <h3 className="font-extrabold text-slate-900 text-base">{item.name}</h3>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 font-medium">
+                    <span className="font-semibold text-slate-700">{rcpt.storeName}</span>
+                    <span className="inline-flex items-center gap-1">
+                      <Calendar className="w-3 h-3" /> Purchased {formatDate(rcpt.purchaseDate)}
                     </span>
+                    <span className="font-mono">{formatCurrency(item.price, rcpt.currency)}</span>
+                    {item.category && (
+                      <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
+                        {item.category}
+                      </span>
+                    )}
+                    {item.warrantyDurationMonths ? (
+                      <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 text-[10px] font-bold">
+                        {item.warrantyDurationMonths} mo warranty
+                      </span>
+                    ) : null}
                   </div>
-
-                  <p className="text-xs text-slate-600 font-medium">
-                    {rcpt.warrantySummary || 'Coverage details extracted from OCR'}
-                  </p>
-
-                  <div className="flex items-center gap-2 pt-1">
-                    {rcpt.items
-                      .filter((i) => i.hasWarranty || i.warrantyExpirationDate)
-                      .map((item, idx) => (
-                        <span
-                          key={idx}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-700"
-                        >
-                          {item.name}
-                        </span>
-                      ))}
-                  </div>
+                  {item.warrantyNotes && (
+                    <p className="text-[11px] text-slate-500 line-clamp-1">{item.warrantyNotes}</p>
+                  )}
                 </div>
               </div>
 
@@ -258,18 +256,23 @@ export const WarrantyDashboard: React.FC<WarrantyDashboardProps> = ({
                     Expires On
                   </span>
                   <span className="text-sm font-extrabold text-slate-900 font-mono">
-                    {formatDate(rcpt.overallWarrantyExpirationDate)}
+                    {formatDate(item.warrantyExpirationDate)}
                   </span>
                   <span
                     className={`block text-[11px] font-bold ${
-                      warrantyInfo.status === 'active'
+                      status.status === 'active'
                         ? 'text-emerald-600'
-                        : warrantyInfo.status === 'expiring_soon'
-                        ? 'text-amber-600 font-extrabold animate-bounce'
-                        : 'text-rose-600'
+                        : status.status === 'expiring_soon'
+                        ? 'text-amber-600 font-extrabold'
+                        : status.status === 'expired'
+                        ? 'text-rose-600'
+                        : 'text-slate-500'
                     }`}
                   >
-                    {warrantyInfo.label}
+                    {status.label}
+                    {status.daysRemaining !== null && status.daysRemaining >= 0
+                      ? ` · ${status.daysRemaining} days left`
+                      : ''}
                   </span>
                 </div>
 

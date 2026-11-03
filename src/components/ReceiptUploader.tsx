@@ -5,15 +5,19 @@ import {
   FileImage,
   Sparkles,
   Zap,
-  Check,
-  AlertCircle,
   X,
   ArrowRight,
   ShieldCheck,
-  Receipt as ReceiptIcon,
+  PenLine,
+  AlertTriangle,
+  ScanText,
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { Camera as CapCamera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { SAMPLE_RECEIPTS } from '../utils/sampleReceipts';
 import { ReceiptData } from '../types/receipt';
+import { recognizeReceiptImage } from '../utils/ocr';
+import { parseReceiptText, createBlankReceipt, ParsedReceiptDraft } from '../utils/receiptParser';
 
 interface ReceiptUploaderProps {
   onParseStart: () => void;
@@ -29,98 +33,84 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
   isProcessing,
 }) => {
   const [dragActive, setDragActive] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [processingStage, setProcessingStage] = useState<string>('');
+  const [progress, setProgress] = useState(0);
   const [cameraActive, setCameraActive] = useState(false);
+  const [ocrFailed, setOcrFailed] = useState(false);
+  const [failedImage, setFailedImage] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
 
-  // Helper to trigger API request to Express server
-  const processReceiptImage = async (base64Data: string, mimeType = 'image/jpeg') => {
+  const toReceiptData = (draft: ParsedReceiptDraft, imageBase64: string): ReceiptData => {
+    const { ocrText, ...rest } = draft;
+    return {
+      ...rest,
+      storeName: rest.storeName || 'Unknown Store',
+      id: `rcpt-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      imageUrl: imageBase64 || undefined,
+      rawNotes: rest.rawNotes,
+      items: rest.items.map((it, idx) => ({ ...it, id: it.id || `item-${idx + 1}` })),
+    };
+  };
+
+  // Fully on-device OCR pipeline: image -> Tesseract OCR -> receipt parser.
+  // No server, no API key, works offline.
+  const processReceiptImage = async (base64Data: string) => {
     onParseStart();
-    setPreviewImage(base64Data);
-
+    setOcrFailed(false);
+    setProgress(0);
     try {
-      setProcessingStage('Analyzing receipt geometry & contrast...');
-      await new Promise((r) => setTimeout(r, 400));
-
-      setProcessingStage('Passing image to Gemini 3.6 Flash Vision OCR...');
-      await new Promise((r) => setTimeout(r, 400));
-
-      setProcessingStage('Parsing store, purchase date & financial line items...');
-
-      const response = await fetch('/api/parse-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          imageBase64: base64Data,
-          mimeType: mimeType,
-        }),
+      setProcessingStage('Loading on-device OCR engine…');
+      const { text, confidence } = await recognizeReceiptImage(base64Data, (p) => {
+        setProgress(Math.round(p.progress * 100));
+        setProcessingStage(
+          p.status === 'recognizing text'
+            ? 'Reading receipt text (on-device OCR)…'
+            : 'Loading on-device OCR engine…'
+        );
       });
 
-      setProcessingStage('Evaluating warranty terms & expiration dates...');
+      setProcessingStage('Parsing store, date, items & warranty terms…');
+      const draft = parseReceiptText(text, confidence);
 
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Failed to parse receipt image via OCR.');
+      if (!draft.items.length && draft.totalAmount === 0 && draft.storeName === 'Unknown Store') {
+        throw new Error(
+          'OCR finished but no receipt details could be read. Try a clearer, well-lit photo — or enter the receipt manually.'
+        );
       }
 
-      const parsed: ReceiptData = {
-        id: `rcpt-${Date.now()}`,
-        storeName: result.data.storeName || 'Unknown Store',
-        storeAddress: result.data.storeAddress,
-        storePhone: result.data.storePhone,
-        purchaseDate: result.data.purchaseDate || new Date().toISOString().split('T')[0],
-        purchaseTime: result.data.purchaseTime,
-        receiptNumber: result.data.receiptNumber,
-        paymentMethod: result.data.paymentMethod,
-        category: result.data.category || 'Retail',
-        subtotal: result.data.subtotal,
-        tax: result.data.tax,
-        totalAmount: Number(result.data.totalAmount) || 0,
-        currency: result.data.currency || '$',
-        overallWarrantyExpirationDate: result.data.overallWarrantyExpirationDate,
-        warrantySummary: result.data.warrantySummary,
-        confidenceScore: result.data.confidenceScore || 95,
-        rawNotes: result.data.rawNotes,
-        createdAt: new Date().toISOString(),
-        imageUrl: base64Data,
-        items: (result.data.items || []).map((it: any, idx: number) => ({
-          id: `item-${idx}`,
-          name: it.name || `Item ${idx + 1}`,
-          price: Number(it.price) || 0,
-          quantity: Number(it.quantity) || 1,
-          category: it.category,
-          hasWarranty: Boolean(it.hasWarranty),
-          warrantyDurationMonths: it.warrantyDurationMonths,
-          warrantyExpirationDate: it.warrantyExpirationDate,
-          warrantyNotes: it.warrantyNotes,
-        })),
-      };
-
-      onParseSuccess(parsed, base64Data);
+      onParseSuccess(toReceiptData(draft, base64Data), base64Data);
     } catch (err: any) {
-      console.error('OCR Processing error:', err);
+      console.error('On-device OCR error:', err);
+      setOcrFailed(true);
+      setFailedImage(base64Data);
       onParseError(
         err.message ||
-          'Could not extract receipt details. Please ensure image is clear and try again.'
+          'Could not extract receipt details on-device. You can review a blank receipt and type the details in manually.'
       );
     } finally {
       setProcessingStage('');
+      setProgress(0);
     }
+  };
+
+  const handleManualEntry = (imageBase64 = '') => {
+    setOcrFailed(false);
+    onParseSuccess(toReceiptData(createBlankReceipt(), imageBase64), imageBase64);
+  };
+
+  const readFileAsDataUrl = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => processReceiptImage(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        processReceiptImage(base64, file.type || 'image/jpeg');
-      };
-      reader.readAsDataURL(file);
+      readFileAsDataUrl(e.target.files[0]);
+      e.target.value = '';
     }
   };
 
@@ -139,27 +129,38 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        processReceiptImage(base64, file.type || 'image/jpeg');
-      };
-      reader.readAsDataURL(file);
+      readFileAsDataUrl(e.dataTransfer.files[0]);
     }
   };
 
-  // Sample Receipt Fast-Track Handler
+  // Sample receipts carry pre-parsed data (they are demo fixtures, not OCR).
   const handleSelectSample = (sample: typeof SAMPLE_RECEIPTS[0]) => {
-    // Try to trigger live OCR or fallback
-    processReceiptImage(sample.svgImage, 'image/svg+xml').catch(() => {
-      // Fallback to rich pre-parsed sample if API fails
-      onParseSuccess(sample.parsedFallback, sample.svgImage);
-    });
+    onParseSuccess(sample.parsedFallback, sample.svgImage);
   };
 
-  // Camera Handler
+  // Camera: Capacitor Camera plugin on Android/iOS, getUserMedia on web.
   const startCamera = async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const photo = await CapCamera.getPhoto({
+          quality: 85,
+          allowEditing: false,
+          resultType: CameraResultType.DataUrl,
+          source: CameraSource.Camera,
+          promptLabelHeader: 'Scan Receipt',
+          promptLabelPhoto: 'From Gallery',
+          promptLabelPicture: 'Take Photo',
+        });
+        if (photo.dataUrl) {
+          processReceiptImage(photo.dataUrl);
+        }
+      } catch (err) {
+        // User cancelled or permission denied — stay quiet on cancel.
+        console.warn('Native camera cancelled/failed:', err);
+      }
+      return;
+    }
+
     try {
       setCameraActive(true);
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -194,7 +195,7 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
         ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
         stopCamera();
-        processReceiptImage(dataUrl, 'image/jpeg');
+        processReceiptImage(dataUrl);
       }
     }
   };
@@ -204,19 +205,19 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
       {/* Hero Header */}
       <div className="text-center max-w-2xl mx-auto space-y-2">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-blue-100/80 text-blue-800 border border-blue-200">
-          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-          <span>Multimodal Vision OCR Engine</span>
+          <ScanText className="w-3.5 h-3.5 text-blue-600" />
+          <span>On-Device OCR — 100% Offline, No API Key</span>
         </div>
         <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
           Scan Receipt &amp; Auto-Extract Warranties
         </h1>
         <p className="text-sm sm:text-base text-slate-600">
-          Upload any store receipt image. AI automatically extracts the store, date, total amount,
-          item breakdown, and warranty expiration dates.
+          Upload any store receipt image. OCR runs entirely on this device and extracts the
+          store, date, total amount, item breakdown, and warranty expiration dates.
         </p>
       </div>
 
-      {/* Camera Modal */}
+      {/* Camera Modal (web getUserMedia path) */}
       {cameraActive && (
         <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 rounded-2xl overflow-hidden max-w-md w-full border border-slate-700 shadow-2xl space-y-4 p-4 text-center">
@@ -289,18 +290,25 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
                 <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-ping opacity-30" />
                 <div className="absolute inset-0 rounded-full border-4 border-t-blue-600 border-r-transparent border-b-indigo-600 border-l-transparent animate-spin" />
                 <div className="absolute inset-0 flex items-center justify-center text-blue-600">
-                  <Sparkles className="w-8 h-8 animate-pulse" />
+                  <ScanText className="w-8 h-8 animate-pulse" />
                 </div>
               </div>
               <div className="space-y-2">
                 <h3 className="text-lg font-bold text-slate-900">
-                  Processing Receipt with Gemini AI OCR
+                  Processing Receipt with On-Device OCR
                 </h3>
                 <p className="text-sm font-medium text-blue-600 animate-pulse">
                   {processingStage || 'Analyzing document...'}
                 </p>
+                <div className="w-64 max-w-full mx-auto h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
                 <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                  Extracting store, purchase date, line items, and warranty expiration dates.
+                  {progress}% — Extracting store, purchase date, line items, and warranty
+                  expiration dates. Everything happens on this device.
                 </p>
               </div>
             </div>
@@ -315,7 +323,8 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
                   Drag &amp; drop your receipt image here
                 </h3>
                 <p className="text-sm text-slate-500 max-w-md mx-auto">
-                  Supports JPEG, PNG, WEBP, and camera photos. Crisp lighting produces highest OCR accuracy.
+                  Supports JPEG, PNG, WEBP, and camera photos. Flat, well-lit, straight-on
+                  photos produce the best OCR accuracy.
                 </p>
               </div>
 
@@ -337,23 +346,55 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
                   <Camera className="w-4 h-4" />
                   Use Camera
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleManualEntry()}
+                  className="px-5 py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-sm shadow-sm transition-all flex items-center gap-2"
+                >
+                  <PenLine className="w-4 h-4" />
+                  Enter Manually
+                </button>
               </div>
             </div>
           )}
         </div>
+
+        {/* OCR failure fallback */}
+        {ocrFailed && !isProcessing && (
+          <div className="mt-4 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex items-start gap-2 flex-1">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold">OCR couldn't read that receipt</p>
+                <p className="text-xs text-amber-700">
+                  Try a sharper, well-lit, straight-on photo — or enter the details manually
+                  and keep the photo attached for reference.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleManualEntry(failedImage)}
+              className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-sm flex items-center gap-1.5 shrink-0"
+            >
+              <PenLine className="w-3.5 h-3.5" /> Enter Manually Instead
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Pre-loaded Sample Receipts for 1-Click Test Drive */}
+      {/* Pre-loaded Sample Receipts */}
       <div className="max-w-4xl mx-auto pt-4 space-y-4">
         <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
           <div className="flex items-center gap-2">
             <Zap className="w-4 h-4 text-amber-500 fill-amber-500" />
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-              Try Sample Receipts (1-Click Instant OCR)
+              Try Sample Receipts
             </h2>
           </div>
           <span className="text-xs text-slate-500 hidden sm:inline">
-            No receipt photo handy? Test with one of these
+            Demo fixtures with pre-parsed data — no receipt photo handy? Start here
           </span>
         </div>
 
@@ -390,6 +431,14 @@ export const ReceiptUploader: React.FC<ReceiptUploaderProps> = ({
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Offline reassurance strip */}
+      <div className="max-w-3xl mx-auto flex items-center justify-center gap-2 text-[11px] text-slate-400">
+        <Sparkles className="w-3.5 h-3.5" />
+        <span>
+          OCR engine (Tesseract) is bundled with the app — receipts never leave your device.
+        </span>
       </div>
     </div>
   );
