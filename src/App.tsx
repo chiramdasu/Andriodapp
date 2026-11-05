@@ -189,7 +189,7 @@ export default function App() {
 
       {/* Footer */}
       <footer className="border-t border-slate-200/80 bg-white py-6 mt-12 text-center text-xs text-slate-500">
-        <p>ReceiptVault &copy; 2026. On-device Tesseract OCR — fully offline, no account or API key needed.</p>
+        <p>Krypton &copy; 2026. On-device Tesseract OCR — fully offline, no account or API key needed.</p>
       </footer>
     </div>
   );

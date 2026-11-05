@@ -103,7 +103,7 @@ export const ReceiptVault: React.FC<ReceiptVaultProps> = ({
             </div>
             <div>
               <h1 className="text-xl font-extrabold text-slate-900 tracking-tight">
-                Receipt Vault
+                Krypton
               </h1>
               <p className="text-xs text-slate-500">
                 {receipts.length} total receipts stored in local archive

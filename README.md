@@ -1,4 +1,4 @@
-# Receipt Vault — Receipt OCR & Warranty Tracker
+# Krypton — Receipt OCR & Warranty Tracker
 
 Scan paper receipts with your phone camera, extract the store, date, totals and
 line items automatically, and track warranty expirations for everything you buy.
@@ -76,7 +76,7 @@ cd android && ./gradlew assembleDebug
 ```
 
 App identity (see `capacitor.config.ts`):
-**appId** `com.chiramdasu.receiptvault`, **appName** `Receipt Vault`.
+**appId** `com.chiramdasu.receiptvault`, **appName** `Krypton`.
 
 The debug APK is fine for sideloading/testing. A **signed release build**
 (`assembleRelease` / Play Store AAB) requires **your own keystore** —

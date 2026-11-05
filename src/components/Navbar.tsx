@@ -35,7 +35,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-900 text-lg tracking-tight">
-                  ReceiptVault
+                  Krypton
                 </span>
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                   <Sparkles className="w-2.5 h-2.5 text-blue-600" /> Offline OCR
